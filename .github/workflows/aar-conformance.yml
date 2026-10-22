@@ -37,6 +37,8 @@ on:
     paths:
       - app/signature.py
       - app/safe_integers.py
+      # app/signature.py imports registry_keys at module level.
+      - app/registry_keys.py
       # score_aar.py imports the real intake and the duplicate-refusing hook.
       - app/enforcement/**
       - tests/conformance/**
