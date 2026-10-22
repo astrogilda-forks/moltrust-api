@@ -1,0 +1,122 @@
+# vectors-agent-audit-record rerun: the 68-member run of score_aar.py, held to the
+# per-member table it was published with (tests/conformance/aar_68_members.tsv).
+#
+#   corpus     probityai/agent-evidence-vectors vectors-agent-audit-record at v0.18.1
+#              (33d5451), corpusDigest 811c1aff...43ba, 68 members, all
+#              draft-gilda-wimse-agent-audit-record-02 records
+#   expected   tests/conformance/aar_68_members.tsv: for every member the verdict and
+#              stage of both intakes, whether it conforms, and the cause class (O: our
+#              record has no counterpart, R: we hold one but no verifier recomputes it,
+#              J: our JSON intake lacks the rule) with its cause text
+#
+# score_aar.py implements no rule of the audit-record format. It applies the checks
+# the decision-record path of /vc/aae/evaluate already runs, as they stand at the
+# commit under test; this workflow adds only the pinned corpus, the comparison and a
+# negative control. A cell that moves fails the job with the member and the column
+# named, not as a different total: if a change to the intake, the integer bound or the
+# canonicalizer moves a verdict, or a recomputation check lands and turns a class-R
+# member into a conforming one, the table is regenerated from a reviewed run in the
+# same pull request. The checker's self-test changes one expected cell, drops one
+# member and offers a wrong digest, and each must be caught, so a comparison that
+# matches everything cannot pass. score_aar.py has its own negative control (A1 with
+# one payload byte flipped must not come back valid).
+#
+# Pinned end to end: the corpus by commit and by corpus digest, every action by
+# commit, the Python dependencies by hash (tests/conformance/requirements-aar.txt,
+# the a2a-jcs set plus asyncpg, which the real JSON intake imports). Read-only token,
+# no secrets. Runs on pull requests that touch a path it measures and weekly.
+#
+# To move to a newer corpus: change AEV_COMMIT and CORPUS_DIGEST together, map every
+# new member to a cause class in score_aar.py, and regenerate the expected TSV from a
+# reviewed run.
+
+name: vectors-agent-audit-record rerun
+
+on:
+  pull_request:
+    paths:
+      - app/signature.py
+      - app/safe_integers.py
+      # score_aar.py imports the real intake and the duplicate-refusing hook.
+      - app/enforcement/**
+      - tests/conformance/**
+      - .github/workflows/aar-conformance.yml
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aar-conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AEV_REPOSITORY: probityai/agent-evidence-vectors
+  AEV_COMMIT: 33d545104ff2f8c124cff465c96c013eeb809156 # v0.18.1
+  CORPUS_DIGEST: 811c1affc0b1669529c572efa7cf1869d09312df22ffafdc490844d4c43a0ba1
+
+jobs:
+  rerun:
+    name: Python ${{ matrix.python }}
+    # 24.04, not ubuntu-latest: setup-python publishes no 3.9 build for newer images.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the pinned corpus
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.AEV_REPOSITORY }}
+          ref: ${{ env.AEV_COMMIT }}
+          path: .aev
+          sparse-checkout: vectors-agent-audit-record
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install the hash-pinned dependencies
+        run: python -m pip install --disable-pip-version-check --require-hashes -r tests/conformance/requirements-aar.txt
+
+      - name: Record the environment
+        run: python -c "import platform, sys, importlib.metadata as m; print(platform.platform(), platform.machine(), sys.version.split()[0], 'jcs', m.version('jcs'), 'cryptography', m.version('cryptography'), 'asyncpg', m.version('asyncpg'))"
+
+      - name: Score the 68 members through the decision-record checks
+        run: >-
+          python tests/conformance/score_aar.py .
+          .aev/vectors-agent-audit-record
+          aar-scored.tsv
+
+      - name: Hold every cell to the published results
+        run: >-
+          python -I tests/conformance/check_aar.py
+          --scored aar-scored.tsv
+          --expected tests/conformance/aar_68_members.tsv
+          --manifest .aev/vectors-agent-audit-record/MANIFEST.json
+          --digest "$CORPUS_DIGEST"
+
+      - name: The comparison must catch a changed cell
+        run: >-
+          python -I tests/conformance/check_aar.py --self-test
+          --scored aar-scored.tsv
+          --expected tests/conformance/aar_68_members.tsv
+          --manifest .aev/vectors-agent-audit-record/MANIFEST.json
+          --digest "$CORPUS_DIGEST"
+
+      - name: Keep the scored run
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aar-scored-py${{ matrix.python }}
+          path: aar-scored.tsv
+          if-no-files-found: ignore
