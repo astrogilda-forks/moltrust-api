@@ -75,6 +75,11 @@ def summary(rows):
     return conform, classes
 
 
+def digest_matches(declared, digest):
+    """True when the manifest declares exactly the pinned digest, and it is not a placeholder."""
+    return declared == digest and declared != "0" * 64
+
+
 def self_test(header, scored, expected, corpus_ids, declared, digest):
     problems = []
     flipped = [dict(r) for r in expected]
@@ -84,10 +89,12 @@ def self_test(header, scored, expected, corpus_ids, declared, digest):
         problems.append("a changed expected cell went unnoticed")
     if not compare(header, scored, expected[1:], corpus_ids):
         problems.append("a dropped expected member went unnoticed")
-    if declared == "0" * 64 or declared != digest:
-        problems.append("the pinned digest does not match the manifest")
-    if "0" * 64 == digest:
+    if digest_matches(declared, "f" * 64):
+        problems.append("a wrong digest was accepted")
+    if digest_matches("0" * 64, "0" * 64):
         problems.append("a placeholder digest was accepted")
+    if not digest_matches(declared, digest):
+        problems.append("the pinned digest does not match the manifest")
     return problems
 
 
@@ -101,7 +108,7 @@ def main():
     args = ap.parse_args()
 
     declared, corpus_ids = manifest_ids(args.manifest)
-    if declared != args.digest:
+    if not digest_matches(declared, args.digest):
         print(f"corpusDigest {declared} is not the pinned {args.digest}")
         return 2
     header, expected = load_tsv(args.expected)
